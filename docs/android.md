@@ -16,7 +16,7 @@
 
    Clone the `llama.cpp` repository:
    ```bash
-   git clone https://github.com/ggerganov/llama.cpp.git
+   git clone https://github.com/Thelucyinside/ik_llama.cpp_snapdragon8gen1.git
    cd llama.cpp
    ```
 
