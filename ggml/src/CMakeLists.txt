@@ -1154,10 +1154,37 @@ if (CMAKE_OSX_ARCHITECTURES      STREQUAL "arm64" OR
 
         set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
     else()
+            # Common ARM flags
         check_cxx_compiler_flag(-mfp16-format=ieee COMPILER_SUPPORTS_FP16_FORMAT_I3E)
         if (NOT "${COMPILER_SUPPORTS_FP16_FORMAT_I3E}" STREQUAL "")
             list(APPEND ARCH_FLAGS -mfp16-format=ieee)
         endif()
+
+            # Check for DOTPROD support
+            set(CMAKE_REQUIRED_FLAGS_PREV ${CMAKE_REQUIRED_FLAGS})
+            set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8.2-a+dotprod")
+            check_cxx_source_compiles("#include <arm_neon.h>\n#ifndef __ARM_FEATURE_DOTPROD\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_DEFINES_DOTPROD_FLAG_GCC)
+            set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
+
+            if (GGML_COMPILER_DEFINES_DOTPROD_FLAG_GCC)
+                message(STATUS "ARM DOTPROD support detected with -march=armv8.2-a+dotprod")
+                list(APPEND ARCH_FLAGS -march=armv8.2-a+dotprod)
+                # Some compilers might not define __ARM_FEATURE_DOTPROD automatically even with march flag
+                add_compile_definitions(__ARM_FEATURE_DOTPROD)
+            else()
+                # Fallback check if the compiler defines __ARM_FEATURE_DOTPROD without specific march flag (e.g. newer default arch)
+                set(CMAKE_REQUIRED_FLAGS_PREV ${CMAKE_REQUIRED_FLAGS})
+                # No specific march flag, rely on compiler's default for the processor or other flags
+                check_cxx_source_compiles("#include <arm_neon.h>\n#ifndef __ARM_FEATURE_DOTPROD\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_DEFINES_DOTPROD_NATIVELY_GCC)
+                set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
+                if(GGML_COMPILER_DEFINES_DOTPROD_NATIVELY_GCC)
+                    message(STATUS "ARM DOTPROD support detected (likely native or due to other flags)")
+                    add_compile_definitions(__ARM_FEATURE_DOTPROD)
+                else()
+                    message(STATUS "ARM DOTPROD support not detected or compiler does not define __ARM_FEATURE_DOTPROD. iqk_mul_mat might not be optimized.")
+                endif()
+            endif()
+
         if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "armv6")
             # Raspberry Pi 1, Zero
             list(APPEND ARCH_FLAGS -mfpu=neon-fp-armv8 -mno-unaligned-access)
