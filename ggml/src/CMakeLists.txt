@@ -1160,28 +1160,55 @@ if (CMAKE_OSX_ARCHITECTURES      STREQUAL "arm64" OR
             list(APPEND ARCH_FLAGS -mfp16-format=ieee)
         endif()
 
-            # Check for DOTPROD support
+            # Check for DOTPROD and FP16 support
+            set(MARCH_FLAG_ARM_OPTIMIZED "-march=armv8.2-a+dotprod+fp16")
             set(CMAKE_REQUIRED_FLAGS_PREV ${CMAKE_REQUIRED_FLAGS})
-            set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8.2-a+dotprod")
-            check_cxx_source_compiles("#include <arm_neon.h>\n#ifndef __ARM_FEATURE_DOTPROD\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_DEFINES_DOTPROD_FLAG_GCC)
+            set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${MARCH_FLAG_ARM_OPTIMIZED}")
+
+            check_cxx_source_compiles("#include <arm_neon.h>\n#if !defined(__ARM_FEATURE_DOTPROD)\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\n#if !defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) && !defined(__ARM_NEON_FP16_INTRINSICS)\n#error \"FP16 vector arithmetic not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_SUPPORTS_DOTPROD_FP16_GCC)
             set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
 
-            if (GGML_COMPILER_DEFINES_DOTPROD_FLAG_GCC)
-                message(STATUS "ARM DOTPROD support detected with -march=armv8.2-a+dotprod")
-                list(APPEND ARCH_FLAGS -march=armv8.2-a+dotprod)
-                # Some compilers might not define __ARM_FEATURE_DOTPROD automatically even with march flag
+            if (GGML_COMPILER_SUPPORTS_DOTPROD_FP16_GCC)
+                message(STATUS "ARM DOTPROD and FP16 vector arithmetic support detected with ${MARCH_FLAG_ARM_OPTIMIZED}")
+                list(APPEND ARCH_FLAGS ${MARCH_FLAG_ARM_OPTIMIZED})
+                # Ensure defines are set if compiler enables features with the march flag
                 add_compile_definitions(__ARM_FEATURE_DOTPROD)
+                add_compile_definitions(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) # Clang uses this
+                add_compile_definitions(__ARM_NEON_FP16_INTRINSICS)      # GCC might use this or define it alongside
             else()
-                # Fallback check if the compiler defines __ARM_FEATURE_DOTPROD without specific march flag (e.g. newer default arch)
+                # Fallback: Check for DOTPROD separately if combined check fails
+                set(MARCH_FLAG_ARM_DOTPROD_ONLY "-march=armv8.2-a+dotprod")
                 set(CMAKE_REQUIRED_FLAGS_PREV ${CMAKE_REQUIRED_FLAGS})
-                # No specific march flag, rely on compiler's default for the processor or other flags
-                check_cxx_source_compiles("#include <arm_neon.h>\n#ifndef __ARM_FEATURE_DOTPROD\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_DEFINES_DOTPROD_NATIVELY_GCC)
+                set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${MARCH_FLAG_ARM_DOTPROD_ONLY}")
+                check_cxx_source_compiles("#include <arm_neon.h>\n#ifndef __ARM_FEATURE_DOTPROD\n#error \"__ARM_FEATURE_DOTPROD not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_SUPPORTS_DOTPROD_ONLY_GCC)
                 set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
-                if(GGML_COMPILER_DEFINES_DOTPROD_NATIVELY_GCC)
-                    message(STATUS "ARM DOTPROD support detected (likely native or due to other flags)")
+
+                if(GGML_COMPILER_SUPPORTS_DOTPROD_ONLY_GCC)
+                    message(STATUS "ARM DOTPROD support detected with ${MARCH_FLAG_ARM_DOTPROD_ONLY}")
+                    list(APPEND ARCH_FLAGS ${MARCH_FLAG_ARM_DOTPROD_ONLY})
                     add_compile_definitions(__ARM_FEATURE_DOTPROD)
                 else()
-                    message(STATUS "ARM DOTPROD support not detected or compiler does not define __ARM_FEATURE_DOTPROD. iqk_mul_mat might not be optimized.")
+                    message(STATUS "ARM DOTPROD support not detected with specific march flag.")
+                endif()
+
+                # Fallback: Check for FP16 separately (even if DOTPROD failed, or if combined failed)
+                set(MARCH_FLAG_ARM_FP16_ONLY "-march=armv8.2-a+fp16") # or just +fp16 if base architecture is already sufficient
+                set(CMAKE_REQUIRED_FLAGS_PREV ${CMAKE_REQUIRED_FLAGS})
+                set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${MARCH_FLAG_ARM_FP16_ONLY}")
+                check_cxx_source_compiles("#include <arm_neon.h>\n#if !defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) && !defined(__ARM_NEON_FP16_INTRINSICS)\n#error \"FP16 vector arithmetic not defined\"\n#endif\nint main() { return 0; }" GGML_COMPILER_SUPPORTS_FP16_ONLY_GCC)
+                set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_PREV})
+
+                if(GGML_COMPILER_SUPPORTS_FP16_ONLY_GCC)
+                    message(STATUS "ARM FP16 vector arithmetic support detected with ${MARCH_FLAG_ARM_FP16_ONLY}")
+                    list(APPEND ARCH_FLAGS ${MARCH_FLAG_ARM_FP16_ONLY})
+                    add_compile_definitions(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+                    add_compile_definitions(__ARM_NEON_FP16_INTRINSICS)
+                else()
+                    message(STATUS "ARM FP16 vector arithmetic support not detected with specific march flag.")
+                endif()
+
+                if (NOT GGML_COMPILER_SUPPORTS_DOTPROD_ONLY_GCC AND NOT GGML_COMPILER_SUPPORTS_FP16_ONLY_GCC)
+                     message(STATUS "Neither DOTPROD nor FP16 vector arithmetic support could be enabled with specific march flags. Optimizations might be limited.")
                 endif()
             endif()
 
